@@ -1,4 +1,5 @@
 ﻿using System.Collections;
+using System.Collections.Generic;
 using TMPro;
 using UnityEngine;
 using UnityEngine.UI;
@@ -13,9 +14,42 @@ public class LogWindow : MonoBehaviour
 
     public RectTransform rectTransform;
 
+    /// <summary>
+    /// Messages logged from non-main threads, drained in Update.
+    /// </summary>
+    /// <remarks>
+    /// The socket callbacks (BeginConnect/BeginReceive) run on thread pool threads and log from
+    /// there. Touching Unity APIs off the main thread throws, and in ConnectCallback that throw is
+    /// swallowed by the surrounding catch, which then sets state to CONNECT_ERROR -- reporting a
+    /// failure for a connection that had in fact been established.
+    /// </remarks>
+    private static readonly Queue<string> PendingMessages = new Queue<string>();
+
+    private const int MaxPendingMessages = 256;
+
     private void Awake()
     {
         _instance = this;
+    }
+
+    private void Update()
+    {
+        // Kept short: the lock is contended by socket threads on every log line.
+        while (true)
+        {
+            string message;
+            lock (PendingMessages)
+            {
+                if (PendingMessages.Count == 0)
+                {
+                    return;
+                }
+
+                message = PendingMessages.Dequeue();
+            }
+
+            AppendText(message);
+        }
     }
 
     private IEnumerator AutoScrollCoroutine()
@@ -57,13 +91,19 @@ public class LogWindow : MonoBehaviour
 
     private static void Message(string message)
     {
-        if (_instance != null)
+        // Callers include socket threads, so nothing here may touch Unity APIs directly: even
+        // reading _instance's implicit bool operator (the != null null-check on a MonoBehaviour)
+        // is a main-thread call. Queue unconditionally and let Update resolve the instance.
+        lock (PendingMessages)
         {
-            _instance.AppendText(message);
-        }
-        else
-        {
-            _instance = FindObjectOfType<LogWindow>();
+            // Bounded because Update only drains while a LogWindow instance is alive; without a
+            // cap, logging from socket threads before/after that would grow without limit.
+            if (PendingMessages.Count >= MaxPendingMessages)
+            {
+                PendingMessages.Dequeue();
+            }
+
+            PendingMessages.Enqueue(message);
         }
     }
 
