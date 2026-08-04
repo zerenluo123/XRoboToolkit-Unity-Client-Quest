@@ -23,7 +23,7 @@
 | Tracking - Head                                | Toggle On/Off to send out head 6 DoF pose                                                    |
 | Tracking - Controller                          | Toggle On/Off to parse VR controller's 6 DoF pose and button status in data stream           |
 | Tracking - Hand                                | Toggle On/Off to parse hand tracking data in data stream                                     |
-| Tracking - Body Tracking                       | Body tracking for Quest. Coming soon ......                                                  |
+| Tracking - Body Tracking                       | Mode dropdown: Off / Body (IOBT) / Motion (PICO only). Body (IOBT) streams 70 upper-body joints from the headset cameras, published as `BodyMeta` — see [Docs/BodyMeta.md](Docs/BodyMeta.md) |
 | Tracking - Data & Control - Send               | Toggle On/Off to sync above selected poses between XR device and robot PC                    |
 | Tracking - Data & Control - Switch w/ A Button | Toggle On/Off to rapid pause or resume sync with  the right-hand controller button A         |
 | Tracking - Status                              | Panel to show tracking related information                                                   |
@@ -38,6 +38,9 @@
 ## Feature list
 - **Pose sync between XR device and robot PC**
   Transmits pose data from the XR headset to the robot-side PC for robot teleoperation.
+- **Body tracking on Quest (Meta IOBT)**
+  Streams 70 upper-body joints inferred from the headset's own cameras — no external trackers.
+  Wire format and consumer notes: [Docs/BodyMeta.md](Docs/BodyMeta.md).
 - **Local pose and stereo vision data collection**
   Synchronously records stereo vision and pose data collected from the XR headset, stored in the device's `/Download` directory.
 - **Remote stereo vision sync between two XR headsets**

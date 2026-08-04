@@ -51,16 +51,18 @@ public class UIOperate : MonoBehaviour
 #endif
         // ReconnectBtn.gameObject.SetActive(false);
 
-        // bodyModeDrop.onValueChanged.AddListener(OnBodyModeDrop);
+        bodyModeDrop.onValueChanged.AddListener(OnBodyModeDrop);
         HeadTog.onValueChanged.AddListener(OnHeadTog);
         ControllerTog.onValueChanged.AddListener(OnControllerTog);
         HandTrackingTog.onValueChanged.AddListener(OnHandTrackingTog);
 
         SendTog.onValueChanged.AddListener(OnSendTog);
         Version.text = "v: " + Application.version;
-        // HighAccuracy.gameObject.SetActive(bodyModeDrop.value > 0);
+        // Meta IOBT has no separate high-accuracy runtime switch: fidelity is a project setting
+        // (OVRRuntimeSettings.BodyTrackingFidelity), not a per-session call like PICO's
+        // StartBodyTracking(mode). The toggle stays hidden so it cannot imply an inactive control.
+        HighAccuracy.gameObject.SetActive(false);
         NetshareTog.onValueChanged.AddListener(OnNetShareTog);
-        // HighAccuracy.onValueChanged.AddListener(OnHighAccuracy);
         ReconnectBtn.onClick.AddListener(OnReconnectBtn);
         //The shared network function is only available on B-end devices.
         NetshareTog.gameObject.SetActive(false);
@@ -194,48 +196,20 @@ public class UIOperate : MonoBehaviour
 
     private void OnBodyModeDrop(int index)
     {
-        // TODO
-        
-        // TrackingData.TrackingType tType = (TrackingData.TrackingType)bodyModeDrop.value;
-        // int res = 0;
-        // bool support = false;
+        TrackingData.TrackingType tType = (TrackingData.TrackingType)bodyModeDrop.value;
 
-        // TODO: body tracking in Quest
-        // MotionTrackerMode trackingMode = PXR_MotionTracking.GetMotionTrackerMode();
-        // if (tType == TrackingData.TrackingType.Body)
-        // {
-        //     if (trackingMode != MotionTrackerMode.BodyTracking)
-        //     {
-        //         res = PXR_MotionTracking.CheckMotionTrackerModeAndNumber(MotionTrackerMode.BodyTracking,
-        //             MotionTrackerNum.TWO);
-        //     }
-        //
-        //     PXR_MotionTracking.GetBodyTrackingSupported(ref support);
-        // }
-        // else if (tType == TrackingData.TrackingType.Motion)
-        // {
-        //     if (trackingMode != MotionTrackerMode.MotionTracking)
-        //     {
-        //         res = PXR_MotionTracking.CheckMotionTrackerModeAndNumber(MotionTrackerMode.MotionTracking,
-        //             MotionTrackerNum.ONE);
-        //     }
-        //
-        //     support = true;
-        // }
+        // Quest counterpart of PICO's tracker mode/number check. There is nothing to calibrate or
+        // pair here (IOBT runs off the headset cameras), so the only precondition is that the
+        // runtime reports support. Reject up front rather than letting the dropdown sit on a mode
+        // that will never produce data.
+        if (tType == TrackingData.TrackingType.Body && !OVRPlugin.bodyTrackingSupported)
+        {
+            bodyModeDrop.SetValueWithoutNotify(0);
+            RefreshBodyInfo();
+            return;
+        }
 
-        // if (!support || res != 0)
-        // {
-        //     BodyInfo.text = "Tracker exception, please connect to calibrate tracker!";
-        //     BodyInfo.color = Color.red;
-        //
-        //     bodyModeDrop.SetValueWithoutNotify(0);
-        //     return;
-        // }
-        //
-        // BodyInfo.color = Color.white;
-        // BodyInfo.text = "Tracker detection is normal!";
-        //
-        // UpdateBodyTracking();
+        UpdateBodyTracking();
     }
 
 
@@ -347,55 +321,109 @@ public class UIOperate : MonoBehaviour
         }
     }
 
-    private void OnHighAccuracy(bool on)
-    {
-        UpdateBodyTracking();
-    }
 
     private void UpdateBodyTracking()
     {
         TrackingData.TrackingType tType = (TrackingData.TrackingType)bodyModeDrop.value;
-        HighAccuracy.gameObject.SetActive(bodyModeDrop.value > 0);
         Debug.Log("UpdateBodyTracking " + tType);
+
+        // Quest has no external trackers; IOBT is inferred from the headset cameras alone.
         TrackNum.text = "";
-        // TODO: Update for Quest
-        // // Set bone length
-        // BodyTrackingBoneLength boneLength = new BodyTrackingBoneLength();
-        // if (bodyModeDrop.value <= 0)
-        // {
-        //     int ret = PXR_MotionTracking.StopBodyTracking();
-        //     BodyInfo.text = "BodyTracking close";
-        // }
-        // else
-        // {
-        //     MotionTrackerConnectState state = new MotionTrackerConnectState();
-        //     PXR_MotionTracking.GetMotionTrackerConnectStateWithSN(ref state);
-        //     //  PXR_MotionTracking.GetMotionTrackerConnectStateWithSN(ref state);
-        //     TrackNum.text = "TrackerNum:" + state.trackerSum;
-        //
-        //     if (tType == TrackingData.TrackingType.Body)
-        //     {
-        //         BodyTrackingMode mode = BodyTrackingMode.BTM_FULL_BODY_LOW;
-        //         if (HighAccuracy.isOn)
-        //         {
-        //             mode = BodyTrackingMode.BTM_FULL_BODY_HIGH;
-        //         }
-        //
-        //         // Enable full body motion capture default mode
-        //         int ret = PXR_MotionTracking.StartBodyTracking(mode, boneLength);
-        //         BodyInfo.text = "Start BodyTracking " + ret;
-        //         Debug.Log(" UpdateBodyTracking :" + ret + " trackerSum:" + state.trackerSum);
-        //     }
-        //     else if (tType == TrackingData.TrackingType.Motion)
-        //     {
-        //         BodyInfo.text = "Start MotionTracking";
-        //     }
-        // }
+
+        if (tType == TrackingData.TrackingType.Motion)
+        {
+            // PICO's motion-tracker mode has no Quest counterpart; reject rather than silently
+            // publish nothing, otherwise the dropdown looks functional but sends no data.
+            bodyModeDrop.SetValueWithoutNotify(0);
+            tType = TrackingData.TrackingType.None;
+            _rejectedMotionUntil = Time.time + 3f;
+        }
 
         TrackingData.SetTrackingType(tType);
+        RefreshBodyInfo();
+    }
+
+    /// <summary>
+    /// Until when the "PICO-only" rejection notice stays on screen, as Time.time.
+    /// </summary>
+    /// <remarks>
+    /// RefreshBodyInfo runs every frame and would otherwise overwrite the notice before it could
+    /// be read: the dropdown is snapped back to Off, so the very next frame reports "closed".
+    /// </remarks>
+    private float _rejectedMotionUntil;
+
+    /// <summary>
+    /// Writes the live body tracking status line.
+    /// </summary>
+    /// <remarks>
+    /// Called every frame rather than only on dropdown change. Calibration is the reason: it
+    /// starts out Calibrating and reaches Valid tens of seconds later, and joint scale is not
+    /// trustworthy until it does. A status line written once at selection time can never show
+    /// that transition, so the operator has no way to tell when the data became usable -- which
+    /// is exactly the question they have while standing there wearing the headset.
+    /// </remarks>
+    private void RefreshBodyInfo()
+    {
+        if (Time.time < _rejectedMotionUntil)
+        {
+            BodyInfo.color = Color.red;
+            BodyInfo.text = "Motion tracker mode is PICO-only";
+            return;
+        }
+
+        if (TrackingData.TrackingTypeValue != TrackingData.TrackingType.Body)
+        {
+            BodyInfo.color = Color.white;
+            BodyInfo.text = "Body tracking off";
+            return;
+        }
+
+        // Meta needs no Start/Stop call: OVRBody requests the tracking session on enable and the
+        // runtime keeps delivering BodyState. Selecting Body is purely a publish decision, so the
+        // status line reports whether the runtime can actually serve us.
+        if (!OVRPlugin.bodyTrackingSupported)
+        {
+            BodyInfo.color = Color.red;
+            BodyInfo.text = "Body tracking unsupported on this device";
+            return;
+        }
+
+        if (!OVRPlugin.bodyTrackingEnabled)
+        {
+            // The system-level toggle is the usual culprit and cannot be changed from here.
+            BodyInfo.color = Color.red;
+            BodyInfo.text = "Enable Settings > Movement Tracking > Body Tracking";
+            return;
+        }
+
+        var source = TrackingData.SharedQuestTrackingDataSource;
+        var state = source != null ? source.GetBodyState() : null;
+        if (state == null || state.Value.JointLocations == null)
+        {
+            // Normal whenever the headset is off the head, neck included: the system's mount
+            // detection gates body tracking, so hanging it round the neck stops the data even
+            // though controller teleop keeps working. See IsBodyTrackingActive for the evidence.
+            BodyInfo.color = Color.yellow;
+            BodyInfo.text = "No body data - put the headset on";
+            return;
+        }
+
+        var body = state.Value;
+        // Green once calibration reads Valid, but this is a readout and not a gate: joints are
+        // published throughout, the same way Unity-Movement's sample scene consumes them. Calibration
+        // runs inside the runtime with no way to switch it off, so waiting for green is optional --
+        // it only means the runtime has stopped adjusting the skeleton's scale.
+        var calibrated = body.CalibrationStatus == OVRPlugin.BodyTrackingCalibrationState.Valid;
+        BodyInfo.color = calibrated ? Color.green : Color.yellow;
+        // Fidelity is omitted: it is fixed at build time (OVRRuntimeSettings), so showing it every
+        // frame spends width on a constant. Calibration and confidence are the two that move.
+        BodyInfo.text = $"Joints: {body.JointLocations.Length}   " +
+                        $"Calibration: {body.CalibrationStatus}   " +
+                        $"Confidence: {body.Confidence:F2}";
     }
 
     private float _lastTime = 0;
+    private float _lastBodyInfoRefresh = 0;
 
     // Update is called once per frame
     void Update()
@@ -407,6 +435,14 @@ public class UIOperate : MonoBehaviour
                 _lastTime = Time.time;
                 RefreshLocalIP();
             }
+        }
+
+        // Throttled: calibration state changes over tens of seconds, so rewriting the string at
+        // the 90 Hz frame rate would only cost a Text layout rebuild per frame for no gain.
+        if (Time.time - _lastBodyInfoRefresh > 0.2f)
+        {
+            _lastBodyInfoRefresh = Time.time;
+            RefreshBodyInfo();
         }
 
         if (AcontrolerTog != null && AcontrolerTog.isOn)

@@ -21,6 +21,7 @@ namespace Robot
 
         private JsonData _motionTrackingJson = new JsonData();
         private JsonData _bodyTrackingJson = new JsonData();
+
         private JsonData _controllerDataJson = new JsonData();
         private JsonData _leftControllerJson = new JsonData();
         private JsonData _rightControllerJson = new JsonData();
@@ -44,6 +45,31 @@ namespace Robot
                 return _questTrackingDataSource;
             }
         }
+
+        /// <summary>
+        /// The scene's tracking data source, for callers that hold no TrackingData instance.
+        /// </summary>
+        /// <remarks>
+        /// The UI needs the same body state that gets published, to show calibration progress.
+        /// TrackingData is instantiated by TcpHandler and not otherwise reachable, so rather than
+        /// have the UI run its own FindObjectOfType this exposes the one cached lookup. There is
+        /// only ever one source in the scene, so caching statically is safe.
+        /// </remarks>
+        public static QuestTrackingDataSource SharedQuestTrackingDataSource
+        {
+            get
+            {
+                if (_sharedQuestTrackingDataSource == null)
+                {
+                    _sharedQuestTrackingDataSource =
+                        GameObject.FindObjectOfType<QuestTrackingDataSource>();
+                }
+
+                return _sharedQuestTrackingDataSource;
+            }
+        }
+
+        private static QuestTrackingDataSource _sharedQuestTrackingDataSource;
 
         /// <summary>
         /// Sets whether head tracking is enabled
@@ -138,8 +164,22 @@ namespace Robot
                         totalData.Remove("Hand");
                 }
 
-                // Remove PICO-specific tracking features for now
-                // Body and Motion tracking would need to be implemented with OpenXR equivalents
+                // Body tracking on Quest uses Meta IOBT, whose skeleton is not interchangeable with
+                // PICO's 24-joint layout, so it is published under its own "BodyMeta" key rather
+                // than PICO's "Body". See Docs/BodyMeta.md for the rationale and the format.
+                if (TrackingTypeValue == TrackingType.Body)
+                {
+                    GetBodyMetaJsonData();
+                    totalData["BodyMeta"] = _bodyTrackingJson;
+                }
+                else
+                {
+                    if (totalData.ContainsKey("BodyMeta"))
+                        totalData.Remove("BodyMeta");
+                }
+
+                // PICO-only features with no OpenXR equivalent on Quest.
+                // "Body" is PICO's 24-joint key; Quest publishes "BodyMeta" instead (above).
                 if (totalData.ContainsKey("Body"))
                     totalData.Remove("Body");
                 if (totalData.ContainsKey("Motion"))
@@ -306,6 +346,105 @@ namespace Robot
             _rightHandData = new JsonData();
             GetOVRHandTrackingData(Handedness.Right, ref _rightHandData);
             _handData["rightHand"] = _rightHandData;
+        }
+
+        /// <summary>
+        /// Builds the BodyMeta JSON payload from Meta IOBT body tracking.
+        /// </summary>
+        /// <remarks>
+        /// Every tracked joint is forwarded losslessly, tagged with its raw OVRPlugin.BoneId.
+        /// Sending the id rather than relying on array order makes the payload self-describing:
+        /// consumers resolve semantics against OVRPlugin.cs instead of guessing an index mapping.
+        /// This matters because the UpperBody and FullBody skeletons use different id layouts
+        /// (e.g. Body_LeftHandWrist = Body_Start+19 while Body_RightHandWrist = Body_Start+45),
+        /// so "jointSet" must be read before interpreting any id.
+        ///
+        /// Velocity/acceleration are absent by design: Meta's BodyJointLocation carries only
+        /// LocationFlags and Pose, unlike PICO's IMU trackers. Differentiate downstream if needed.
+        /// </remarks>
+        private void GetBodyMetaJsonData()
+        {
+            var state = questTrackingDataSource.GetBodyState();
+            var isActive = state != null && state.Value.JointLocations != null;
+
+            _bodyTrackingJson["isActive"] = isActive ? 1U : 0U;
+
+            // The tracking space pose is what makes root locomotion recoverable: joint coordinates
+            // are tracking-space local, so posture alone cannot say where the operator stands.
+            var trackingSpacePose = questTrackingDataSource.GetTrackingSpacePose();
+            var tsPosition = trackingSpacePose.position;
+            var tsRotation = trackingSpacePose.rotation;
+            ConvertHandedness(ref tsPosition, ref tsRotation);
+            _bodyTrackingJson["trackingSpace"] = GetPoseStr(tsPosition, tsRotation);
+
+            // JsonData objects are reused across frames rather than reallocated, matching the
+            // PICO client. At the 90 Hz send rate a fresh object per joint would mean ~70
+            // allocations every frame, which is avoidable GC churn on a mobile SoC.
+            JsonData jointsJson;
+            if (_bodyTrackingJson.ContainsKey("joints"))
+            {
+                jointsJson = _bodyTrackingJson["joints"];
+            }
+            else
+            {
+                jointsJson = new JsonData();
+                jointsJson.SetJsonType(JsonType.Array);
+                _bodyTrackingJson["joints"] = jointsJson;
+            }
+
+            if (!isActive)
+            {
+                _bodyTrackingJson["count"] = 0;
+                return;
+            }
+
+            var bodyState = state.Value;
+            var joints = bodyState.JointLocations;
+
+            // Data-quality metadata, passed through for the consumer to interpret rather than
+            // acted on here. Joints are published regardless of calib, matching Unity-Movement's
+            // sample scene, which drives its avatar throughout Calibrating with no visible difference
+            // once Valid arrives. Calibration lives in the runtime: it cannot be disabled or
+            // pre-seeded, and it restarts on every re-don, so gating on it would stall the stream
+            // for 30-60s each time for no gain. Calibrating means the runtime is still adjusting
+            // skeleton scale, not that there is no data.
+            _bodyTrackingJson["jointSet"] = bodyState.JointSet.ToString();
+            _bodyTrackingJson["fidelity"] = bodyState.Fidelity.ToString();
+            _bodyTrackingJson["calib"] = bodyState.CalibrationStatus.ToString();
+            _bodyTrackingJson["confidence"] = bodyState.Confidence;
+            _bodyTrackingJson["count"] = joints.Length;
+
+            for (var i = 0; i < joints.Length; i++)
+            {
+                var joint = joints[i];
+
+                // Two distinct conversions in sequence, not a redundant double flip:
+                //   FromFlippedZ*     : OVRPlugin (OpenXR, right-handed) -> Unity (left-handed)
+                //   ConvertHandedness : Unity -> the wire convention shared with the PICO client
+                // The hand path only needs the second one because Oculus.Interaction hands its
+                // Pose over already converted; raw BodyState joints are pre-conversion.
+                var position = joint.Pose.Position.FromFlippedZVector3f();
+                var rotation = joint.Pose.Orientation.FromFlippedZQuatf();
+
+                ConvertHandedness(ref position, ref rotation);
+
+                JsonData jointJson;
+                if (i < jointsJson.Count)
+                {
+                    jointJson = jointsJson[i];
+                }
+                else
+                {
+                    jointJson = new JsonData();
+                    jointsJson.Add(jointJson);
+                }
+
+                jointJson["id"] = i;
+                jointJson["p"] = GetPoseStr(position, rotation);
+                // Occluded joints keep stale values, so validity must travel with the data
+                jointJson["v"] = joint.PositionValid ? 1U : 0U;
+                jointJson["vr"] = joint.OrientationValid ? 1U : 0U;
+            }
         }
 
         /// <summary>
