@@ -61,6 +61,10 @@ public static class BodyTrackingSetup
         System.IO.Directory.CreateDirectory("Build");
         const string outPath = "Build/quest-body.apk";
 
+        // Uses the project's own application id. A local build is signed with the debug key, so
+        // Android will not install it over a release-signed package of the same id -- uninstall
+        // the official build first:
+        //   adb uninstall com.xrobotoolkit.client.quest
         var summary = BuildPipeline.BuildPlayer(new BuildPlayerOptions
         {
             scenes = scenes.ToArray(),
@@ -115,14 +119,15 @@ public static class BodyTrackingSetup
     /// Fidelity=High is what actually turns IOBT on; Low is IK inference from headset and
     /// controllers only, not camera-measured limbs.
     ///
-    /// JointSet stays UpperBody: those joints are all camera-measured, whereas FullBody appends
-    /// Generative Legs predictions. FullBody also needs the system-level full-body toggle and was
-    /// observed to fail startup outright on a Quest 3 that had only body tracking enabled.
+    /// JointSet is only the startup default; the Mode dropdown switches it at runtime.
     /// </summary>
     private static void ConfigureRuntimeSettings()
     {
         var rs = OVRRuntimeSettings.GetRuntimeSettings();
         rs.BodyTrackingFidelity = OVRPlugin.BodyTrackingFidelity2.High;
+        // The joint set the app starts on, not a fixed choice: the Mode dropdown switches it at
+        // runtime via OVRBody.SetRequestedJointSet. UpperBody is the default because its joints are
+        // all camera-measured, whereas FullBody's extra 14 are inferred by Generative Legs.
         rs.BodyTrackingJointSet = OVRPlugin.BodyJointSet.UpperBody;
         OVRRuntimeSettings.CommitRuntimeSettings(rs);
         Debug.Log($"[BodyTrackingSetup] fidelity={rs.BodyTrackingFidelity} " +
@@ -273,6 +278,7 @@ public static class BodyTrackingSetup
             }
 
             RelabelBodyModeOptions(drop, path);
+            WidenBodyModeCaption(drop, path);
             LayOutBodyModeRow(drop, path);
             WidenBodyInfo(ui, path);
         }
@@ -369,7 +375,11 @@ public static class BodyTrackingSetup
         var innerGroup = inner.GetComponent<UnityEngine.UI.HorizontalLayoutGroup>();
         if (innerGroup != null)
         {
-            innerGroup.padding = new RectOffset(0, 0, 9, 0);
+            // Bottom padding lifts the row; the authored 9px of *top* padding pushed it down
+            // instead. Measured against the rows this should match: Mode sat 0.034 world units
+            // below its box centre where Head/Controller/Send sit 0.007-0.010 below theirs.
+            // Zeroing top got it to 0.021, and 8px of bottom padding covers the rest.
+            innerGroup.padding = new RectOffset(0, 0, 0, 8);
             innerGroup.spacing = 8;
             innerGroup.childForceExpandWidth = false;
             innerGroup.childAlignment = TextAnchor.MiddleLeft;
@@ -422,16 +432,75 @@ public static class BodyTrackingSetup
     /// <remarks>
     /// OnBodyModeDrop casts the dropdown *index* to TrackingType, so the labels are decorative
     /// while the index is load-bearing. Upstream inherited PICO's "None / Upper / Full" wording,
-    /// which now actively misleads: index 1 ("Upper") is TrackingType.Body, and index 2 ("Full")
-    /// is TrackingType.Motion -- PICO's external-tracker mode, which has no Quest equivalent and
-    /// is rejected back to None. "Full" reads like full-body capture but is a dead end.
+    /// where index 2 ("Full") was PICO's external-tracker mode -- no Quest equivalent, so "Full"
+    /// read like full-body capture but was a dead end. It now really is full body: index 2 is
+    /// TrackingType.FullBody, which switches the runtime to the 84-joint skeleton.
     ///
-    /// Note this does not choose the skeleton: UpperBody vs FullBody is OVRRuntimeSettings
-    /// (see ConfigureRuntimeSettings), fixed at build time and not switchable here.
+    /// The joint count is spelled out because it is the one thing that distinguishes the two on
+    /// the wire, and it is what the status line reports back once a switch takes effect.
     /// </remarks>
+    /// <summary>
+    /// Gives the dropdown and its labels room for the mode names.
+    /// </summary>
+    /// <remarks>
+    /// The control was authored 70px wide with 45px Wrap-overflow labels, which fitted the old
+    /// "Body (IOBT)" but clips "Upper Body (70)" -- and a label that reads as a different mode is
+    /// worse than one that is visibly cut off.
+    ///
+    /// The control itself has to grow, not just the text inside it: stretching the labels to the
+    /// parent only buys 70px, still a few short. Its layout group has ChildControlWidth off and
+    /// 461px of row to spend, so widening the rect sticks.
+    ///
+    /// Widened rather than shrinking the font: at size 10 these are already the smallest text in
+    /// the panel.
+    /// </remarks>
+    private static void WidenBodyModeCaption(UnityEngine.UI.Dropdown drop, string path)
+    {
+        // Fits "Upper Body (70)" at font size 10 with margin for the arrow, measured from the
+        // clipped result rather than guessed: 70px cut the closing bracket.
+        const float dropdownWidth = 130f;
+        var dropRt = (RectTransform)drop.transform;
+        dropRt.sizeDelta = new Vector2(dropdownWidth, dropRt.sizeDelta.y);
+        EditorUtility.SetDirty(dropRt);
+
+        // Left inset clearing the item template's checkmark, which is anchored left, 20px wide at
+        // x=10 -- so it occupies 0..20px. Taking the label to x=0 to gain width put the text
+        // underneath it and the tick overlapped the first letter. The caption has no checkmark and
+        // keeps the authored inset, so the two are indented alike.
+        const float checkmarkInset = 22f;
+
+        // The caption shows the current selection; the item template is what the open list uses.
+        // Fixing only the caption leaves the list itself clipped.
+        foreach (var label in new[] { drop.captionText, drop.itemText })
+        {
+            if (label == null)
+            {
+                continue;
+            }
+
+            var isItem = label == drop.itemText;
+            var inset = isItem ? checkmarkInset : 10f;
+            var rt = (RectTransform)label.transform;
+            // Stretch to the parent's width instead of a fixed size, so this does not need to know
+            // how wide the dropdown is -- and stays right if the row is ever re-laid out.
+            rt.anchorMin = new Vector2(0f, rt.anchorMin.y);
+            rt.anchorMax = new Vector2(1f, rt.anchorMax.y);
+            // Negative width leaves room on both sides: the inset on the left, plus the same again
+            // on the right so text stops short of the arrow rather than touching it.
+            rt.sizeDelta = new Vector2(-(inset + 10f), rt.sizeDelta.y);
+            rt.anchoredPosition = new Vector2(inset * 0.5f, rt.anchoredPosition.y);
+            label.horizontalOverflow = HorizontalWrapMode.Overflow;
+            label.alignment = TextAnchor.MiddleLeft;
+            EditorUtility.SetDirty(label);
+            EditorUtility.SetDirty(rt);
+        }
+
+        Debug.Log($"[BodyTrackingSetup] {path}: bodyModeDrop widened to {dropdownWidth}px, caption and items stretched");
+    }
+
     private static void RelabelBodyModeOptions(UnityEngine.UI.Dropdown drop, string path)
     {
-        var labels = new[] { "Off", "Body (IOBT)", "Motion (PICO only)" };
+        var labels = new[] { "Off", "Upper Body (70)", "Full Body (84)" };
         if (drop.options.Count != labels.Length)
         {
             Debug.LogWarning($"[BodyTrackingSetup] {path}: bodyModeDrop has {drop.options.Count} " +

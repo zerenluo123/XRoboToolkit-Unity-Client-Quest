@@ -6677,10 +6677,10 @@ RectTransform:
   m_Father: {fileID: 2032583195}
   m_RootOrder: 0
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
-  m_AnchorMin: {x: 0.5, y: 0.5}
-  m_AnchorMax: {x: 0.5, y: 0.5}
-  m_AnchoredPosition: {x: 0, y: 0}
-  m_SizeDelta: {x: 45, y: 20}
+  m_AnchorMin: {x: 0, y: 0.5}
+  m_AnchorMax: {x: 1, y: 0.5}
+  m_AnchoredPosition: {x: 5, y: 0}
+  m_SizeDelta: {x: -20, y: 20}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!114 &398004546
 MonoBehaviour:
@@ -6712,7 +6712,7 @@ MonoBehaviour:
     m_Alignment: 3
     m_AlignByGeometry: 0
     m_RichText: 1
-    m_HorizontalOverflow: 0
+    m_HorizontalOverflow: 1
     m_VerticalOverflow: 0
     m_LineSpacing: 1
   m_Text: Off
@@ -18226,8 +18226,8 @@ MonoBehaviour:
   m_Padding:
     m_Left: 0
     m_Right: 0
-    m_Top: 9
-    m_Bottom: 0
+    m_Top: 0
+    m_Bottom: 8
   m_ChildAlignment: 3
   m_Spacing: 8
   m_ChildForceExpandWidth: 0
@@ -35160,7 +35160,7 @@ RectTransform:
   m_AnchorMin: {x: 0, y: 0}
   m_AnchorMax: {x: 0, y: 0}
   m_AnchoredPosition: {x: 0, y: 0}
-  m_SizeDelta: {x: 70, y: 24}
+  m_SizeDelta: {x: 130, y: 24}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!114 &2032583196
 MonoBehaviour:
@@ -35251,9 +35251,9 @@ MonoBehaviour:
     m_Options:
     - m_Text: Off
       m_Image: {fileID: 0}
-    - m_Text: Body (IOBT)
+    - m_Text: Upper Body (70)
       m_Image: {fileID: 0}
-    - m_Text: Motion (PICO only)
+    - m_Text: Full Body (84)
       m_Image: {fileID: 0}
   m_OnValueChanged:
     m_PersistentCalls:
@@ -35381,8 +35381,8 @@ RectTransform:
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
   m_AnchorMin: {x: 0, y: 0}
   m_AnchorMax: {x: 1, y: 1}
-  m_AnchoredPosition: {x: 10, y: -0.5}
-  m_SizeDelta: {x: -20, y: -3}
+  m_AnchoredPosition: {x: 11, y: -0.5}
+  m_SizeDelta: {x: -32, y: -3}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!114 &2037206164
 MonoBehaviour:
@@ -35414,7 +35414,7 @@ MonoBehaviour:
     m_Alignment: 3
     m_AlignByGeometry: 0
     m_RichText: 1
-    m_HorizontalOverflow: 0
+    m_HorizontalOverflow: 1
     m_VerticalOverflow: 0
     m_LineSpacing: 1
   m_Text: Option A

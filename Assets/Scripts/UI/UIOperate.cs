@@ -198,11 +198,11 @@ public class UIOperate : MonoBehaviour
     {
         TrackingData.TrackingType tType = (TrackingData.TrackingType)bodyModeDrop.value;
 
-        // Quest counterpart of PICO's tracker mode/number check. There is nothing to calibrate or
-        // pair here (IOBT runs off the headset cameras), so the only precondition is that the
-        // runtime reports support. Reject up front rather than letting the dropdown sit on a mode
-        // that will never produce data.
-        if (tType == TrackingData.TrackingType.Body && !OVRPlugin.bodyTrackingSupported)
+        // There is nothing to calibrate or pair (IOBT runs off the headset cameras), so the only
+        // precondition is that the device supports body tracking at all -- which covers both joint
+        // sets, since Generative Legs needs no hardware beyond what UpperBody already uses. Reject
+        // up front rather than letting the dropdown sit on a mode that will never produce data.
+        if (TrackingData.JointSetOf(tType) != null && !OVRPlugin.bodyTrackingSupported)
         {
             bodyModeDrop.SetValueWithoutNotify(0);
             RefreshBodyInfo();
@@ -330,27 +330,22 @@ public class UIOperate : MonoBehaviour
         // Quest has no external trackers; IOBT is inferred from the headset cameras alone.
         TrackNum.text = "";
 
-        if (tType == TrackingData.TrackingType.Motion)
+        // Switching before SetTrackingType, so the first published frame already carries the new
+        // joint set: the runtime stops and restarts the tracking session, and a frame read in
+        // between would report the old layout with the new mode selected.
+        var jointSet = TrackingData.JointSetOf(tType);
+        if (jointSet != null)
         {
-            // PICO's motion-tracker mode has no Quest counterpart; reject rather than silently
-            // publish nothing, otherwise the dropdown looks functional but sends no data.
-            bodyModeDrop.SetValueWithoutNotify(0);
-            tType = TrackingData.TrackingType.None;
-            _rejectedMotionUntil = Time.time + 3f;
+            var source = TrackingData.SharedQuestTrackingDataSource;
+            if (source != null)
+            {
+                source.SwitchJointSet(jointSet.Value);
+            }
         }
 
         TrackingData.SetTrackingType(tType);
         RefreshBodyInfo();
     }
-
-    /// <summary>
-    /// Until when the "PICO-only" rejection notice stays on screen, as Time.time.
-    /// </summary>
-    /// <remarks>
-    /// RefreshBodyInfo runs every frame and would otherwise overwrite the notice before it could
-    /// be read: the dropdown is snapped back to Off, so the very next frame reports "closed".
-    /// </remarks>
-    private float _rejectedMotionUntil;
 
     /// <summary>
     /// Writes the live body tracking status line.
@@ -364,23 +359,16 @@ public class UIOperate : MonoBehaviour
     /// </remarks>
     private void RefreshBodyInfo()
     {
-        if (Time.time < _rejectedMotionUntil)
-        {
-            BodyInfo.color = Color.red;
-            BodyInfo.text = "Motion tracker mode is PICO-only";
-            return;
-        }
-
-        if (TrackingData.TrackingTypeValue != TrackingData.TrackingType.Body)
+        if (TrackingData.JointSetOf(TrackingData.TrackingTypeValue) == null)
         {
             BodyInfo.color = Color.white;
             BodyInfo.text = "Body tracking off";
             return;
         }
 
-        // Meta needs no Start/Stop call: OVRBody requests the tracking session on enable and the
-        // runtime keeps delivering BodyState. Selecting Body is purely a publish decision, so the
-        // status line reports whether the runtime can actually serve us.
+        // The tracking session is requested by OVRBody on enable and restarted when the joint set
+        // changes; selecting a mode here is otherwise just a publish decision, so the status line
+        // reports whether the runtime can actually serve us.
         if (!OVRPlugin.bodyTrackingSupported)
         {
             BodyInfo.color = Color.red;
@@ -415,8 +403,9 @@ public class UIOperate : MonoBehaviour
         // it only means the runtime has stopped adjusting the skeleton's scale.
         var calibrated = body.CalibrationStatus == OVRPlugin.BodyTrackingCalibrationState.Valid;
         BodyInfo.color = calibrated ? Color.green : Color.yellow;
-        // Fidelity is omitted: it is fixed at build time (OVRRuntimeSettings), so showing it every
-        // frame spends width on a constant. Calibration and confidence are the two that move.
+        // Fidelity is omitted: it is a build-time project setting, so showing it every frame spends
+        // width on a constant. The joint count is what confirms a mode switch took effect -- 70 for
+        // Upper Body, 84 for Full Body -- and calibration and confidence are the two that move.
         BodyInfo.text = $"Joints: {body.JointLocations.Length}   " +
                         $"Calibration: {body.CalibrationStatus}   " +
                         $"Confidence: {body.Confidence:F2}";

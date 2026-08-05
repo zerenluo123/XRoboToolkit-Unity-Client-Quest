@@ -205,6 +205,31 @@ public class QuestTrackingDataSource : MonoBehaviour
     }
 
     /// <summary>
+    /// Switches the joint set the runtime tracks and this component reads, e.g. 70-joint
+    /// UpperBody to 84-joint FullBody. Returns false if the runtime refused.
+    /// </summary>
+    /// <remarks>
+    /// Both assignments are needed and neither is redundant, because the SDK reads the joint set
+    /// from two places: <c>SetRequestedJointSet</c> restarts the tracking session against
+    /// OVRRuntimeSettings, while <c>GetBodyState4</c> is called with OVRBody's own
+    /// ProvidedSkeletonType. Setting only the first leaves the runtime producing 84 joints that
+    /// this component still asks for 70 of; setting only the second asks for joints the session
+    /// was never started to produce. The SDK does not reconcile them -- OVRBody.OnEnable only
+    /// logs a warning when they disagree.
+    /// </remarks>
+    public bool SwitchJointSet(OVRPlugin.BodyJointSet jointSet)
+    {
+        if (body != null)
+        {
+            body.ProvidedSkeletonType = jointSet;
+        }
+
+        var ok = OVRBody.SetRequestedJointSet(jointSet);
+        Debug.Log($"[QuestTrackingDataSource] joint set -> {jointSet} ({(ok ? "ok" : "REJECTED")})");
+        return ok;
+    }
+
+    /// <summary>
     /// Gets the raw body tracking state, or null when unavailable.
     /// </summary>
     /// <remarks>

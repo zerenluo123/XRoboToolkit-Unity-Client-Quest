@@ -23,8 +23,10 @@ need rates.
 
 ## Format
 
-`BodyMeta` is present only while **Mode = Body (IOBT)** is selected; it is removed from the packet
-otherwise.
+`BodyMeta` is present while **Mode** is either **Upper Body (70)** or **Full Body (84)**; it is
+removed from the packet when Mode is Off. `count` and `jointSet` tell the consumer which set is
+live, and both change as soon as the operator switches mode — so read the layout per frame rather
+than caching it at startup.
 
 ```json
 {
@@ -99,16 +101,26 @@ directions, with absolute limb lengths normalised away; if you do need them, sub
 positions — measured across 69 bones, 62 varied by under 5 mm, with left/right symmetric to the
 hundredth of a centimetre.
 
-## Joint layout (`UpperBody`, 70 joints)
+## Joint layout
 
-| id range | count | contents |
-|---|---|---|
-| `0 – 7` | 8 | Root, Hips, SpineLower, SpineMiddle, SpineUpper, Chest, Neck, Head |
-| `8 – 17` | 10 | per side: Shoulder, Scapula, ArmUpper, ArmLower, HandWristTwist |
-| `18 – 43` | 26 | left hand: Palm, Wrist, thumb (4) + 4 fingers (5 each) |
-| `44 – 69` | 26 | right hand: same layout |
+Selected at runtime from the client's Mode dropdown. `FullBody` keeps `UpperBody`'s ids and
+meanings and appends to them, so a consumer that only understands the first 70 keeps working.
+
+| id range | count | contents | set |
+|---|---|---|---|
+| `0 – 7` | 8 | Root, Hips, SpineLower, SpineMiddle, SpineUpper, Chest, Neck, Head | both |
+| `8 – 17` | 10 | per side: Shoulder, Scapula, ArmUpper, ArmLower, HandWristTwist | both |
+| `18 – 43` | 26 | left hand: Palm, Wrist, thumb (4) + 4 fingers (5 each) | both |
+| `44 – 69` | 26 | right hand: same layout | both |
+| `70 – 83` | 14 | per side: LegUpper, LegLower, FootAnkleTwist, FootAnkle, FootSubtalar, FootTransverse, FootBall | `FullBody` only |
 
 Note `id 44` is `RightHandPalm` — the right hand starts at 44, not 45.
+
+The lower-body 14 are **inferred, not measured**: the cameras cannot see the operator's legs while
+the headset is worn, so Generative Legs predicts them from head and upper-body motion. They are a
+different kind of data from `0 – 69` and should not be treated as ground truth. Both legs parent to
+`Hips`, and each `*FootAnkleTwist` parents to its `LegLower` alongside the ankle rather than in the
+chain, mirroring how `LeftHandWristTwist` sits beside `LeftHandWrist`.
 
 For joint names, use `BodyJointId` from `BodyPrimitives.cs`, **not**
 `OVRPlugin.BoneId.ToString()`: `BoneId` overlays several skeletons on the same numeric values, so it
@@ -127,6 +139,6 @@ Body tracking fails **silently** if any of these is wrong — no error, no log, 
 |---|---|---|
 | `bodyTrackingSupport` | `OculusProjectConfig` | `1` |
 | `bodyTrackingFidelity` | `OculusRuntimeSettings` | `2` (High) — `1` silently degrades to IK-only |
-| `bodyTrackingJointSet` | `OculusRuntimeSettings` | `0` (UpperBody) |
+| `bodyTrackingJointSet` | `OculusRuntimeSettings` | `0` (UpperBody) — the startup default only; the Mode dropdown switches it at runtime |
 | `requestBodyTrackingPermissionOnStartup` | `OculusProjectConfig` | `true` — otherwise `com.oculus.permission.BODY_TRACKING` is never requested |
 | `OVRBody` component | scene | present — nothing requests a tracking session without it |

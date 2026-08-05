@@ -19,7 +19,6 @@ namespace Robot
         public static bool HandTrackingOn { get; private set; }
         public static TrackingType TrackingTypeValue { get; private set; }
 
-        private JsonData _motionTrackingJson = new JsonData();
         private JsonData _bodyTrackingJson = new JsonData();
 
         private JsonData _controllerDataJson = new JsonData();
@@ -99,7 +98,7 @@ namespace Robot
         }
 
         /// <summary>
-        /// Sets the current tracking type (None, Body, Motion)
+        /// Sets the current tracking type (None, Body, FullBody)
         /// </summary>
         /// <param name="trackingType">The tracking type to set</param>
         public static void SetTrackingType(TrackingType trackingType)
@@ -164,26 +163,20 @@ namespace Robot
                         totalData.Remove("Hand");
                 }
 
-                // Body tracking on Quest uses Meta IOBT, whose skeleton is not interchangeable with
-                // PICO's 24-joint layout, so it is published under its own "BodyMeta" key rather
-                // than PICO's "Body". See Docs/BodyMeta.md for the rationale and the format.
-                if (TrackingTypeValue == TrackingType.Body)
+                // Published under "BodyMeta" rather than "Body": the latter is a fixed 24-joint
+                // layout with per-joint velocity and acceleration, none of which Meta IOBT
+                // provides. See Docs/BodyMeta.md for the format.
+                if (JointSetOf(TrackingTypeValue) != null)
                 {
                     GetBodyMetaJsonData();
                     totalData["BodyMeta"] = _bodyTrackingJson;
                 }
                 else
                 {
+                    // totalData is reused across frames, so a stale key would keep being sent.
                     if (totalData.ContainsKey("BodyMeta"))
                         totalData.Remove("BodyMeta");
                 }
-
-                // PICO-only features with no OpenXR equivalent on Quest.
-                // "Body" is PICO's 24-joint key; Quest publishes "BodyMeta" instead (above).
-                if (totalData.ContainsKey("Body"))
-                    totalData.Remove("Body");
-                if (totalData.ContainsKey("Motion"))
-                    totalData.Remove("Motion");
 
                 long nsTime = Utils.GetCurrentTimestamp();
                 totalData["timeStampNs"] = nsTime;
@@ -414,6 +407,21 @@ namespace Robot
             _bodyTrackingJson["confidence"] = bodyState.Confidence;
             _bodyTrackingJson["count"] = joints.Length;
 
+            // Drop entries the current joint set does not have. The array is reused across
+            // frames, and the loop below only overwrites the first joints.Length of them, so
+            // switching FullBody -> UpperBody would otherwise leave the 14 leg joints behind
+            // holding their last FullBody coordinates. A consumer sees an 84-entry array
+            // disagreeing with count=70, and the stale joints look like tracking that froze
+            // rather than a joint set that shrank.
+            // Cast for RemoveAt: LitJson implements it explicitly via IList. Removing by
+            // index rather than by value, since Remove(object) searches by equality and two
+            // joints sharing a pose would delete the wrong entry.
+            var jointsList = (System.Collections.IList)jointsJson;
+            while (jointsList.Count > joints.Length)
+            {
+                jointsList.RemoveAt(jointsList.Count - 1);
+            }
+
             for (var i = 0; i < joints.Length; i++)
             {
                 var joint = joints[i];
@@ -643,10 +651,33 @@ namespace Robot
         {
             None = 0,
 
-            // Body and Motion tracking would require OpenXR extensions
-            // Keeping enum for compatibility but functionality removed
+            /// <summary>Meta IOBT upper body: 70 camera-derived joints.</summary>
             Body = 1,
-            Motion = 2
+
+            /// <summary>The 70 above plus 14 lower-body joints from Generative Legs.</summary>
+            /// <remarks>
+            /// The legs are inferred from head and upper-body motion, not seen: the headset
+            /// cameras cannot observe them while it is worn. Consumers that need measured joints
+            /// only should stay on <see cref="Body"/>.
+            /// </remarks>
+            FullBody = 2
+        }
+
+        /// <summary>
+        /// The joint set a mode publishes, or null when it publishes no body data.
+        /// </summary>
+        /// <remarks>
+        /// One switch answers both "should we publish" and "which layout", because they are the
+        /// same question -- adding a further body mode means adding one case here.
+        /// </remarks>
+        public static OVRPlugin.BodyJointSet? JointSetOf(TrackingType trackingType)
+        {
+            switch (trackingType)
+            {
+                case TrackingType.Body: return OVRPlugin.BodyJointSet.UpperBody;
+                case TrackingType.FullBody: return OVRPlugin.BodyJointSet.FullBody;
+                default: return null;
+            }
         }
     }
 }
